@@ -3,87 +3,86 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import requests
 
-st.set_page_config(page_title="Wheel Pro Scanner - Stable", layout="wide")
+st.set_page_config(page_title="Wheel Pro Scanner - Ultimate", layout="wide")
 
-# --- LISTA TICKER DI EMERGENZA (S&P 500 TOP) ---
-def get_fallback_tickers():
+# --- LISTA TICKER CORE ---
+def get_reliable_tickers():
     return [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "V", "JNJ", "WMT",
-        "JPM", "PG", "MA", "UNH", "HD", "KO", "PEP", "CVX", "ABBV", "COST",
-        "AVGO", "ADBE", "TMO", "CSCO", "CRM", "XOM", "ACN", "BAC", "DIS", "NFLX"
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO", "COST", "NFLX",
+        "KO", "PEP", "JNJ", "PG", "WMT", "CVX", "XOM", "ABBV", "JPM", "V", "MA", "UNH", 
+        "HD", "CSCO", "CRM", "BAC", "DIS", "ADBE", "ACN", "TMO"
     ]
 
-# --- INTERFACCIA ---
-st.title("🎯 Wheel Strategy Pro Scanner (Stable Version)")
+st.title("🎯 Wheel Strategy Pro Scanner")
+st.info("Questa versione utilizza un sistema di camuffamento per evitare i blocchi dei dati.")
 
-st.sidebar.header("⚙️ Parametri Screening")
-mcap_min = st.sidebar.number_input("Market Cap Min (B$)", value=10)
+# SIDEBAR
+st.sidebar.header("⚙️ Parametri")
+mcap_min = st.sidebar.number_input("Market Cap Min (B$)", value=5)
 div_min = st.sidebar.number_input("Div. Yield Min (%)", value=0.0)
-vol_min = st.sidebar.number_input("Volatilità Min (%)", value=1.0)
+vol_min = st.sidebar.number_input("Volatilità Min (%)", value=0.5)
 
 if st.button('🚀 AVVIA SCANSIONE'):
-    tickers = get_fallback_tickers()
+    tickers = get_reliable_tickers()
     results = []
-    log_area = st.expander("📝 Log di Scansione (Clicca per vedere i progressi)", expanded=True)
-    
+    log_area = st.expander("📝 Log di Analisi", expanded=True)
     progress_bar = st.progress(0)
     
+    # Setup sessione per evitare blocchi
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    })
+
     for i, t in enumerate(tickers):
         try:
-            log_area.write(f"Analizzando {t}...")
-            # Usiamo un timeout per non bloccare l'app
-            stock = yf.Ticker(t)
-            # Forza il download dei dati veloci
-            fast_info = stock.fast_info 
+            log_area.write(f"Scansione di {t}...")
+            stock = yf.Ticker(t, session=session)
             
-            # Recupero dati base
-            price = fast_info.get('last_price')
-            mcap = fast_info.get('market_cap', 0) / 1e9
-            
-            # Se il prezzo non c'è, passiamo oltre
-            if not price:
-                log_area.warning(f"⚠️ {t}: Dati non disponibili")
-                continue
-
-            # Recupero dati storici per supporto e volatilità
-            hist = stock.history(period="1mo")
+            # Scarichiamo la cronologia (metodo più affidabile per i prezzi)
+            hist = stock.history(period="5d")
             if hist.empty:
+                log_area.warning(f"⚠️ {t}: Nessuno storico trovato")
                 continue
-
-            # Calcolo Volatilità (High-Low medio)
-            vol_calc = ((hist['High'] - hist['Low']) / hist['Low']).mean() * 100
             
-            # Calcolo Supporto Semplice (Minimo del mese)
-            supp = hist['Low'].min()
+            price = hist['Close'].iloc[-1]
             
-            # Calcolo Strike Conservativo (90% del prezzo attuale)
-            strike = round((price * 0.90) * 2) / 2
+            # Dati fondamentali
+            info = stock.info
+            mcap = info.get('marketCap', 0) / 1e9
+            div = info.get('dividendYield', 0) * 100
+            
+            # Calcoli tecnici su base mensile
+            hist_m = stock.history(period="1mo")
+            vol_calc = ((hist_m['High'] - hist_m['Low']) / hist_m['Low']).mean() * 100
+            supp = hist_m['Low'].min()
+            
+            # Calcolo Strike CSP (Deviazione Standard semplificata)
+            std = hist_m['Close'].pct_change().std()
+            strike = round((price * (1 - (std * 4.47))) * 2) / 2 # 4.47 è radice di 20gg
 
-            # Dividend Yield (da info classica)
-            div = stock.info.get('dividendYield', 0) * 100
-
-            # FILTRAGGIO
             if mcap >= mcap_min and div >= div_min and vol_calc >= vol_min:
                 results.append({
                     "Ticker": t,
                     "Prezzo": f"{price:.2f}$",
-                    "Supporto (1m)": f"{supp:.2f}$",
-                    "Strike (CSP)": f"{strike:.2f}$",
+                    "Supporto": f"{supp:.2f}$",
+                    "Strike Suggerito": f"{strike:.2f}$",
                     "Dividendo": f"{div:.2f}%",
                     "Volatilità": f"{vol_calc:.1f}%"
                 })
-                log_area.success(f"✅ {t} aggiunto!")
+                log_area.success(f"✅ {t} caricato correttamente.")
             else:
-                log_area.info(f"❌ {t} non supera i filtri")
+                log_area.info(f"❌ {t} filtrato (non rispetta i parametri).")
 
         except Exception as e:
-            log_area.error(f"❗ Errore su {t}: {e}")
+            log_area.error(f"❗ Errore critico su {t}: {str(e)[:100]}")
             
         progress_bar.progress((i + 1) / len(tickers))
 
     if results:
-        st.write("### 📊 Risultati Screening")
+        st.write("### 📊 Selezione Titoli per Wheel Strategy")
         st.dataframe(pd.DataFrame(results), use_container_width=True)
     else:
-        st.error("Nessun titolo trovato. Prova ad abbassare ulteriormente i parametri nella barra laterale.")
+        st.error("Ancora nessun dato. Prova a riavviare l'app tra pochi minuti, Yahoo potrebbe aver temporaneamente limitato l'IP.")
