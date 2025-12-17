@@ -1,93 +1,102 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import numpy as np
-from datetime import datetime
+import requests
+from datetime import datetime, timedelta
+import io
 
 st.set_page_config(page_title="Wheel Strategy Pro Scanner", layout="wide")
 
-# Lista titoli affidabile per il test iniziale
-TICKERS_WHEEL = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "V", "JNJ", "WMT",
-    "JPM", "PG", "MA", "UNH", "HD", "KO", "PEP", "CVX", "ABBV", "COST"
-]
+# --- CONFIGURAZIONE API ---
+API_KEY = st.sidebar.text_input("Inserisci FMP API Key", type="password") #
+
+def get_fmp_data(endpoint, params=""):
+    url = f"https://financialmodelingprep.com/api/v3/{endpoint}?apikey={API_KEY}{params}"
+    try:
+        response = requests.get(url)
+        return response.json() if response.status_code == 200 else None
+    except:
+        return None
 
 st.title("🎯 Wheel Strategy Pro Scanner")
-st.markdown("Analisi basata sui criteri Finviz: Capitalizzazione, Liquidità e Dividendi.")
+st.markdown("Scanner professionale con esportazione dati e i 7 filtri Finviz configurati.")
 
-# SIDEBAR - FILTRI DAGLI SCREENSHOT UTENTE
-st.sidebar.header("⚙️ Parametri Screening")
-mcap_min = st.sidebar.number_input("Market Cap Minima (Biliardi $)", value=10)
-min_div = st.sidebar.number_input("Dividend Yield Min (%)", value=1.5)
-min_vol_perc = st.sidebar.slider("Volatilità Mensile Min (%)", 0.0, 10.0, 2.0)
-min_avg_vol = 1000000 # Filtro Volume > 1M (da screenshot)
-
-st.sidebar.header("🚨 Gestione Rischio")
-avoid_earnings = st.sidebar.checkbox("Escludi Earnings imminenti (< 7gg)", value=True)
-
-if st.button('🚀 AVVIA SCANSIONE'):
-    results = []
-    log_area = st.expander("📝 Log di Analisi", expanded=True)
-    progress_bar = st.progress(0)
-    
-    for i, t in enumerate(TICKERS_WHEEL):
-        try:
-            log_area.write(f"Scansione di {t}...")
-            stock = yf.Ticker(t)
-            
-            # Recupero storico per Prezzo, Supporto e Volatilità
-            hist_m = stock.history(period="1mo")
-            if hist_m.empty:
-                continue
-            
-            price = hist_m['Close'].iloc[-1]
-            supp = hist_m['Low'].min()
-            # Volatilità mensile (High-Low medio)
-            vol_calc = ((hist_m['High'] - hist_m['Low']) / hist_m['Low']).mean() * 100
-            
-            # Dati fondamentali
-            info = stock.info
-            mcap = info.get('market_cap', info.get('marketCap', 0)) / 1e9
-            div = info.get('dividendYield', 0) * 100
-            avg_vol = info.get('averageVolume', 0)
-
-            # Controllo Earnings (Punto 6 screenshot)
-            calendar = stock.calendar
-            days_to_earn = 999
-            if calendar is not None and 'Earnings Date' in calendar:
-                earn_date = calendar['Earnings Date'][0].replace(tzinfo=None)
-                days_to_earn = (earn_date - datetime.now()).days
-
-            # APPLICAZIONE FILTRI
-            if (mcap >= mcap_min and div >= min_div and 
-                avg_vol >= min_avg_vol and vol_calc >= min_vol_perc):
-                
-                if avoid_earnings and 0 <= days_to_earn < 7:
-                    log_area.warning(f"⚠️ {t} saltato: Earnings troppo vicini.")
-                    continue
-                
-                # Calcolo Strike Suggerito (conservativo)
-                std = hist_m['Close'].pct_change().std()
-                strike = round((price * (1 - (std * 2.5))) * 2) / 2
-                
-                results.append({
-                    "Ticker": t,
-                    "Prezzo": f"{price:.2f}$",
-                    "Supporto": f"{supp:.2f}$",
-                    "Strike Suggerito": f"{strike:.2f}$",
-                    "Div. Yield": f"{div:.2f}%",
-                    "Vol. Mensile": f"{vol_calc:.1f}%",
-                    "Status": "✅ OK"
-                })
-                log_area.success(f"✅ {t} aggiunto.")
+if not API_KEY:
+    st.warning("⚠️ Inserisci la tua API Key nella sidebar per iniziare.")
+else:
+    if st.button('🚀 AVVIA SCANSIONE COMPLETA'):
+        # 1, 2, 3. Filtri base: Market Cap > 10B, Volume > 1M, Optionable
+        screener_params = "&marketCapMoreThan=10000000000&volumeMoreThan=1000000&isEtf=false&isActivelyTrading=true"
+        stocks = get_fmp_data("stock-screener", screener_params)
         
-        except Exception as e:
-            log_area.error(f"❗ Errore su {t}. Yahoo ha limitato la connessione.")
-            
-        progress_bar.progress((i + 1) / len(TICKERS_WHEEL))
+        if stocks:
+            results = []
+            progress_bar = st.progress(0)
+            today = datetime.now()
+            next_week = today + timedelta(days=7)
 
-    if results:
-        st.write("### 📊 Risultati Screening")
-        st.dataframe(pd.DataFrame(results), use_container_width=True)
-    else:
-        st.error("Nessun dato ricevuto. Yahoo Finance sta bloccando i server di Streamlit.")
+            # Analizziamo un campione per gestire il limite di 250 chiamate/giorno
+            for i, s in enumerate(stocks[:50]): 
+                symbol = s['symbol']
+                
+                # Recupero Storico (per Volatilità, Supporto e Relative Volume)
+                hist = get_fmp_data(f"historical-price-full/{symbol}", "&timeseries=30")
+                if not hist or 'historical' not in hist: continue
+                
+                df = pd.DataFrame(hist['historical'])
+                curr_price = df['close'].iloc[0]
+                
+                # 7. Relative Volume > 1
+                avg_vol_10d = df['volume'].head(10).mean()
+                rel_vol = df['volume'].iloc[0] / avg_vol_10d
+                
+                # 5. Volatilità Mensile > 2%
+                vol_mensile = ((df['high'] - df['low']) / df['low']).mean() * 100
+                
+                # 4. Dividend Yield > 0%
+                div_yield = s.get('lastDiv', 0)
+                
+                # 6. Controllo Earnings (Escludi se < 7gg)
+                earn_data = get_fmp_data(f"historical/earnings-calendar/{symbol}")
+                is_safe_earn = True
+                if earn_data:
+                    next_earn_str = earn_data[0].get('date')
+                    if next_earn_str:
+                        next_earn_dt = datetime.strptime(next_earn_str, '%Y-%m-%d')
+                        if today <= next_earn_dt <= next_week:
+                            is_safe_earn = False
+
+                # Verifica finale filtri
+                if vol_mensile >= 2.0 and div_yield > 0 and rel_vol > 1.0 and is_safe_earn:
+                    supp = df['low'].min()
+                    strike = round((curr_price * 0.90) * 2) / 2
+                    
+                    results.append({
+                        "Ticker": symbol,
+                        "Prezzo ($)": round(curr_price, 2),
+                        "Strike Suggerito": strike,
+                        "Supporto (30g)": round(supp, 2),
+                        "Div. Yield (%)": round(div_yield, 2),
+                        "Volat. Mensile (%)": round(vol_mensile, 2),
+                        "Rel. Volume": round(rel_vol, 2),
+                        "Data Analisi": today.strftime('%Y-%m-%d')
+                    })
+                progress_bar.progress((i + 1) / 50)
+
+            if results:
+                df_final = pd.DataFrame(results)
+                st.write("### 📊 Risultati Screening")
+                st.dataframe(df_final, use_container_width=True)
+
+                # --- FUNZIONE DI ESPORTAZIONE EXCEL ---
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_final.to_excel(writer, index=False, sheet_name='Wheel_Scanner')
+                
+                st.download_button(
+                    label="📥 Scarica i risultati in Excel",
+                    data=buffer.getvalue(),
+                    file_name=f"Wheel_Analysis_{today.strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.warning("Nessun titolo soddisfa i criteri al momento.")
