@@ -49,7 +49,7 @@ st.markdown("Scanner avanzato basato sui parametri di **Finviz** e **Barchart**.
 
 # SIDEBAR PER I FILTRI
 st.sidebar.header("⚙️ Parametri Screening")
-min_mcap = st.sidebar.slider("Market Cap Minima (Biliardi $)", 0.5, 500, 20)
+min_mcap = st.sidebar.slider("Market Cap Minima (Biliardi $)", 1, 500, 20)
 min_div = st.sidebar.number_input("Dividend Yield Min (%)", value=1.5, step=0.5)
 min_vol_filter = st.sidebar.slider("Volatilità Mensile Min (%)", 1.0, 10.0, 2.0)
 
