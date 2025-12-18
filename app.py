@@ -1,57 +1,44 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
-import requests
 
-st.set_page_config(page_title="Scanner Wheel 2025", layout="wide")
+st.set_page_config(page_title="Scanner Wheel Gratuito", layout="wide")
 
-# La tua chiave confermata
-API_KEY = "sQJgPn10EvTF6U4HzkVRukBF0Y0ijMrL"
+st.title("🎯 Scanner Mercato USA (Motore Yahoo Finance)")
+st.write("Questa versione non usa chiavi API e non può essere bloccata.")
 
-def get_data(symbol):
-    # Usiamo il profilo (per settore e mkt cap) e la quote (per il prezzo real-time)
-    # Questi NON sono endpoint legacy e dovrebbero funzionare
-    url_profile = f"https://financialmodelingprep.com/api/v3/profile/{symbol}?apikey={API_KEY}"
-    url_quote = f"https://financialmodelingprep.com/api/v3/quote/{symbol}?apikey={API_KEY}"
-    
-    try:
-        p_res = requests.get(url_profile).json()
-        q_res = requests.get(url_quote).json()
-        
-        if p_res and q_res:
-            p = p_res[0]
-            q = q_res[0]
-            return {
-                "Ticker": symbol,
-                "Prezzo": q.get('price'),
-                "Variazione %": q.get('changesPercentage'),
-                "Market Cap (B)": round(p.get('mktCap', 0) / 1e9, 2),
-                "Settore": p.get('sector')
-            }
-        return None
-    except:
-        return None
+# Lista di titoli famosi e liquidi
+TICKERS = ['AAPL', 'TSLA', 'NVDA', 'AMD', 'MSFT', 'AMZN', 'META', 'GOOGL', 'NFLX', 'PLTR', 'BABA', 'DIS']
 
-st.title("🎯 Scanner Mercato USA - Versione 2025")
-st.info("Questa versione evita gli endpoint 'Legacy' bloccati da FMP.")
-
-if st.button('🚀 AVVIA ANALISI TITOLI SELEZIONATI'):
-    # Lista di titoli attivi e liquidi (ottimi per le opzioni)
-    tickers = ['AAPL', 'TSLA', 'NVDA', 'AMD', 'MSFT', 'AMZN', 'META', 'GOOGL', 'NFLX', 'PYPL', 'PLTR', 'BABA']
-    
+if st.button('🚀 AVVIA SCANSIONE ORA'):
     results = []
     prog = st.progress(0)
+    status = st.empty()
     
-    for i, t in enumerate(tickers):
-        data = get_data(t)
-        if data:
-            # Calcoliamo uno Strike conservativo (-10% dal prezzo attuale)
-            data["Strike Put Cons."] = round(data["Prezzo"] * 0.90, 1)
-            results.append(data)
-        prog.progress((i + 1) / len(tickers))
+    for i, t in enumerate(TICKERS):
+        status.text(f"Scaricando dati per {t}...")
+        try:
+            ticker_data = yf.Ticker(t)
+            info = ticker_data.info
+            
+            price = info.get('currentPrice')
+            if price:
+                # Calcoliamo lo strike per la Put (-10%)
+                strike = round(price * 0.90, 1)
+                results.append({
+                    "Ticker": t,
+                    "Prezzo Attuale": f"{price:.2f}$",
+                    "Strike Consigliato (-10%)": f"{strike:.2f}$",
+                    "Settore": info.get('sector', 'N/A'),
+                    "Market Cap (B)": f"{info.get('marketCap', 0) / 1e9:.1f}"
+                })
+        except:
+            continue
+        prog.progress((i + 1) / len(TICKERS))
     
+    status.empty()
     if results:
-        df = pd.DataFrame(results)
-        st.write("### 📊 Opportunità Rilevate")
-        st.dataframe(df.style.format({"Prezzo": "{:.2f}$", "Strike Put Cons.": "{:.2f}$", "Variazione %": "{:+.2f}%"}))
+        st.write("### 📊 Risultati Analisi")
+        st.table(pd.DataFrame(results))
     else:
-        st.error("Errore di autorizzazione. Assicurati che l'email di FMP sia stata confermata.")
+        st.error("Errore nel recupero dati da Yahoo Finance. Riprova tra un istante.")
