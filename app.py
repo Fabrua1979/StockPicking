@@ -2,53 +2,56 @@ import streamlit as st
 import pandas as pd
 import requests
 
-st.set_page_config(page_title="Wheel Scanner Lite", layout="wide")
+st.set_page_config(page_title="Scanner Wheel 2025", layout="wide")
 
+# La tua chiave confermata
 API_KEY = "sQJgPn10EvTF6U4HzkVRukBF0Y0ijMrL"
 
-def get_profile(symbol):
-    url = f"https://financialmodelingprep.com/api/v3/profile/{symbol}?apikey={API_KEY}"
+def get_data(symbol):
+    # Usiamo il profilo (per settore e mkt cap) e la quote (per il prezzo real-time)
+    # Questi NON sono endpoint legacy e dovrebbero funzionare
+    url_profile = f"https://financialmodelingprep.com/api/v3/profile/{symbol}?apikey={API_KEY}"
+    url_quote = f"https://financialmodelingprep.com/api/v3/quote/{symbol}?apikey={API_KEY}"
+    
     try:
-        r = requests.get(url)
-        return r.json()[0] if r.status_code == 200 and r.json() else None
+        p_res = requests.get(url_profile).json()
+        q_res = requests.get(url_quote).json()
+        
+        if p_res and q_res:
+            p = p_res[0]
+            q = q_res[0]
+            return {
+                "Ticker": symbol,
+                "Prezzo": q.get('price'),
+                "Variazione %": q.get('changesPercentage'),
+                "Market Cap (B)": round(p.get('mktCap', 0) / 1e9, 2),
+                "Settore": p.get('sector')
+            }
+        return None
     except:
         return None
 
-st.title("🎯 Scanner Wheel Strategy (Versione Compatibile)")
-st.write("Questa versione utilizza una lista titoli predefinita per evitare i blocchi del piano API.")
+st.title("🎯 Scanner Mercato USA - Versione 2025")
+st.info("Questa versione evita gli endpoint 'Legacy' bloccati da FMP.")
 
-if st.button('🚀 AVVIA SCANSIONE'):
-    # Lista di 40 titoli molto scambiati e famosi (evita la Stock Directory bloccata)
-    tickers = [
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'JPM', 'V', 'MA',
-        'JNJ', 'PG', 'HD', 'DIS', 'KO', 'PEP', 'CVX', 'XOM', 'ABBV', 'MRK',
-        'PFE', 'WMT', 'T', 'VZ', 'INTC', 'CSCO', 'BA', 'MCD', 'NKE', 'IBM',
-        'AMD', 'NFLX', 'PYPL', 'ADBE', 'CRM', 'QCOM', 'TXN', 'COST', 'SBUX', 'AMAT'
-    ]
+if st.button('🚀 AVVIA ANALISI TITOLI SELEZIONATI'):
+    # Lista di titoli attivi e liquidi (ottimi per le opzioni)
+    tickers = ['AAPL', 'TSLA', 'NVDA', 'AMD', 'MSFT', 'AMZN', 'META', 'GOOGL', 'NFLX', 'PYPL', 'PLTR', 'BABA']
     
     results = []
-    progress_bar = st.progress(0)
+    prog = st.progress(0)
     
-    for i, ticker in enumerate(tickers):
-        data = get_profile(ticker)
+    for i, t in enumerate(tickers):
+        data = get_data(t)
         if data:
-            mcap = data.get('mktCap', 0) / 1e9
-            div = data.get('lastDiv', 0)
-            # Filtro: Capitalizzazione > 10B e ha un dividendo
-            if mcap > 10 and div > 0:
-                price = data.get('price', 0)
-                strike = round((price * 0.90) * 2) / 2
-                results.append({
-                    "Ticker": ticker,
-                    "Prezzo": f"{price:.2f}$",
-                    "Strike Put (-10%)": f"{strike:.2f}$",
-                    "Dividendo": f"{div:.2f}%",
-                    "Cap. (B)": f"{mcap:.1f}"
-                })
-        progress_bar.progress((i + 1) / len(tickers))
-
+            # Calcoliamo uno Strike conservativo (-10% dal prezzo attuale)
+            data["Strike Put Cons."] = round(data["Prezzo"] * 0.90, 1)
+            results.append(data)
+        prog.progress((i + 1) / len(tickers))
+    
     if results:
-        st.success(f"Analisi completata! Trovati {len(results)} titoli.")
-        st.table(pd.DataFrame(results))
+        df = pd.DataFrame(results)
+        st.write("### 📊 Opportunità Rilevate")
+        st.dataframe(df.style.format({"Prezzo": "{:.2f}$", "Strike Put Cons.": "{:.2f}$", "Variazione %": "{:+.2f}%"}))
     else:
-        st.error("Nessun dato recuperato. Verifica di aver confermato l'email di FMP.")
+        st.error("Errore di autorizzazione. Assicurati che l'email di FMP sia stata confermata.")
